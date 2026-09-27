@@ -576,7 +576,13 @@ export default function AgentConfigSection({
               <option value={DEFAULT_REHEARSAL_SCRIPT}>Sample script (default)</option>
               {(scriptOptions ?? []).map((s) => (
                 <option key={s.script_id} value={s.script_id}>
-                  {s.script_id} - {s.node_label} ({s.review_status})
+                  {/* Both ids, and the node's comes first. It is the engagement's own address -
+                      `1.F` is the frontline, `0.A` is audit - where `SC-006` says only that it
+                      was the sixth script written. A consultant choosing a rehearsal for a
+                      particular audience recognises the chain, not the sequence. The script id
+                      stays because it is the identity every report and assignment cites, and
+                      because it is what somebody says out loud when asking for one. */}
+                  {s.node_id ? `${s.node_id} · ` : ''}{s.script_id} - {s.node_label} ({s.review_status})
                 </option>
               ))}
             </select>

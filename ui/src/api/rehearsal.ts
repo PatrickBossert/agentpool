@@ -10,6 +10,15 @@ import { apiClient } from './client'
 export interface RehearsalScriptOption {
   /** The permanent id - `SC-005`. What a consultant cites, and what the door is asked for. */
   script_id: string
+  /**
+   * The value chain node this script interviews about - `1.F`, `0.A`, `2.4`.
+   *
+   * **Declared required**, like every other field here. `ProjectSettings` is this file's warning:
+   * fields the page promised to send survived a round trip only on an untyped spread, and a
+   * dropped one fails silently in the worst direction. An option whose address is missing reads
+   * as a script about nothing.
+   */
+  node_id: string
   /** The activity it interviews about, which is what a consultant actually recognises. */
   node_label: string
   /**

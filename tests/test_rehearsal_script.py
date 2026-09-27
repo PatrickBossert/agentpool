@@ -399,6 +399,14 @@ async def test_a_retired_script_is_not_offered_and_an_active_one_is(project_with
 
     assert [s["script_id"] for s in offered] == ["SC-001"]
     assert offered[0]["node_label"] == CHOSEN_LABEL
+    # The value chain node, which the dropdown shows ahead of the script id: `1.F` says
+    # frontline and `0.A` says audit, where `SC-006` says only that it was written sixth.
+    #
+    # Asserted here because a mutation removing `node_id` from the query survived every test in
+    # this file - the frontend caught it and the server did not, which is the wrong way round
+    # for a field the server is the only source of. A door that stops returning it makes the
+    # label silently lose half its content, and the option still renders.
+    assert offered[0]["node_id"] == "1.1"
     assert offered[0]["review_status"] == "pending", \
         "the state is shown so the choice is informed - the list is not approved-only"
     assert RETIRED_LABEL not in json.dumps(offered)

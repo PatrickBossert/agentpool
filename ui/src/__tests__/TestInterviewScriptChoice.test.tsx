@@ -72,14 +72,19 @@ function config(): AgentConfig {
 // The scripts the door offers. Two of them, because "the chosen one is served" is only a real
 // claim when there was something else to choose - and their questions are distinct so the
 // assertion can name which interview actually ran.
+// The two node ids are deliberately unalike: `1.2.2` is an L3 activity and `1.F` is an L1
+// role node, so an assertion on one cannot pass by matching the other, and neither is a
+// substring of a script id.
 const OFFERED = [
   {
     script_id: 'SC-005',
+    node_id: '1.2.2',
     node_label: 'Portfolio Optimisation and Investment Planning',
     review_status: 'pending',
   },
   {
     script_id: 'SC-014',
+    node_id: '1.F',
     node_label: 'ISS Property FM Technicians - Frontline',
     review_status: 'approved',
   },
@@ -271,13 +276,22 @@ describe('choosing the script a rehearsal is conducted from', () => {
     expect(chooser().value).toBe('')
   })
 
-  it('names each script by its reference and its description, with the review state', async () => {
+  it('names each script by both ids, its description, and the review state', async () => {
+    /**
+     * The whole label, asserted exactly. This test earned its keep the day the node id was
+     * added: it failed on the character, which is what an exact label assertion is for - a
+     * `toContain('SC-005')` would have passed a label that had silently lost half its content.
+     */
     renderSection()
     await waitFor(() => expect(chooser().options.length).toBe(OFFERED.length + 1))
 
     const labels = [...chooser().options].map((o) => o.textContent ?? '')
-    expect(labels).toContain('SC-005 - Portfolio Optimisation and Investment Planning (pending)')
-    expect(labels).toContain('SC-014 - ISS Property FM Technicians - Frontline (approved)')
+    expect(labels).toContain(
+      '1.2.2 \u00b7 SC-005 - Portfolio Optimisation and Investment Planning (pending)',
+    )
+    expect(labels).toContain(
+      '1.F \u00b7 SC-014 - ISS Property FM Technicians - Frontline (approved)',
+    )
   })
 
   it('does not restrict the list to approved scripts', async () => {
@@ -359,5 +373,55 @@ describe('choosing the script a rehearsal is conducted from', () => {
     expect(chooser().options).toHaveLength(1)
     await openRehearsal()
     expect(scriptRequests).toHaveLength(1)
+  })
+})
+
+// ── The value chain id is shown beside the script id ─────────────────────────
+
+describe('the option names the chain as well as the script', () => {
+  beforeEach(() => {
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config())
+    vi.mocked(agentConfigApi.getAll).mockResolvedValue({ agents: [] } as never)
+    vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
+      can_administer_project: true,
+    } as never)
+    vi.mocked(rehearsalApi.options).mockResolvedValue(OFFERED)
+    vi.stubGlobal('fetch', installFetch())
+    installAudioAndMic()
+    installSpeechRecognition()
+  })
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks() })
+
+  it('shows the node id, and shows it before the script id', async () => {
+    /**
+     * The owner asked for this because `SC-006` says only that it was the sixth script
+     * written, while `1.F` says frontline and `0.A` says audit - and a consultant choosing a
+     * rehearsal for a particular audience recognises the engagement by its chain.
+     *
+     * It also brings this control into line with the rest of the product: CLAUDE.md records
+     * that a script is shown by its value chain node id, which is how `ScriptReviewRow`
+     * labels the approver's view. This dropdown was the one place showing the identity and
+     * not the address.
+     *
+     * Asserted on the **order** rather than on presence, because a label carrying both in the
+     * wrong order would satisfy a substring check while burying the thing that was asked for.
+     */
+    renderSection()
+    await waitFor(() => expect(chooser()).toBeInTheDocument())
+    const option = await screen.findByRole('option', { name: /Portfolio Optimisation/ })
+    expect(option.textContent).toContain('1.2.2')
+    expect(option.textContent).toContain('SC-005')
+    expect(option.textContent!.indexOf('1.2.2')).toBeLessThan(
+      option.textContent!.indexOf('SC-005'),
+    )
+  })
+
+  it('offers the default without a node id, and does not render a stray separator', async () => {
+    /** The control. The committed default belongs to no engagement and has no chain address;
+     *  a label reading "· Sample script" would be the separator surviving a missing id. */
+    renderSection()
+    await waitFor(() => expect(chooser()).toBeInTheDocument())
+    const fallback = await screen.findByRole('option', { name: /Sample script/ })
+    expect(fallback.textContent).not.toContain('·')
   })
 })

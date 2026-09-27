@@ -168,7 +168,7 @@ async def _active_ledger_rows(slug: str) -> list[dict]:
             if not project:
                 return []
             cur = await conn.execute(
-                "SELECT script_id, node_label, review_status"
+                "SELECT script_id, node_id, node_label, review_status"
                 "  FROM interview_script_ledger"
                 " WHERE project_id = ? AND active = 1"
                 " ORDER BY script_id",
@@ -177,6 +177,20 @@ async def _active_ledger_rows(slug: str) -> list[dict]:
             return [
                 {
                     "script_id": row["script_id"],
+                    # The value chain node this script interviews about. Carried because a
+                    # consultant choosing a rehearsal recognises the engagement by its chain
+                    # rather than by a script's sequence number: `1.F` says frontline, `0.A`
+                    # says audit, and `SC-006` says only that it was the sixth written.
+                    #
+                    # It also brings this list into line with the rest of the product.
+                    # CLAUDE.md: *"A script is shown by its value chain node id. `script_id`
+                    # remains the identity - stakeholder assignments and stored answers cite
+                    # it"* - which is how `ScriptReviewRow` labels the approver's view. This
+                    # dropdown showed the identity and not the address, which is the one place
+                    # in the product that did. Both are shown here rather than swapping one for
+                    # the other, because the id is what a consultant types when asking for a
+                    # specific script and what every report cites.
+                    "node_id": row["node_id"] or "",
                     "node_label": row["node_label"] or "",
                     "review_status": row["review_status"] or "pending",
                 }
