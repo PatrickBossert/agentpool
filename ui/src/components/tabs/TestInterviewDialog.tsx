@@ -172,6 +172,16 @@ export default function TestInterviewDialog({
   const [progress, setProgress]       = useState({ current: 0, total: 0 })
   const [transcript, setTranscript]   = useState<QAPair[]>([])
   const [showTranscript, setShowTx]   = useState(false)
+  // What the recogniser has heard on the answer in progress - the finalised parts plus the
+  // interim tail, which is the shape `VoiceInterview.tsx` displays to a participant and not a
+  // second one invented here. The dialog had set `interimResults = true` since it was written and
+  // used the text for one thing only, pre-warming the elaboration press, so a consultant
+  // rehearsing an interview watched a countdown bar and had to open the transcript afterwards to
+  // find out what had been captured.
+  //
+  // It is cleared when an answer resolves, which is not decoration: left standing, the previous
+  // answer's words sit under the next question and read as the recogniser having mis-heard it.
+  const [interimText, setInterimText] = useState('')
   const [isBriefing, setIsBriefing]   = useState(false)
   const [editingIdx, setEditingIdx]   = useState<number | null>(null)
   const [editText, setEditText]       = useState('')
@@ -416,6 +426,19 @@ export default function TestInterviewDialog({
 
   function listenForAnswer(lang = bcp47(locale), question?: ScriptQuestion): Promise<string> {
     return new Promise(resolve => {
+      // Belt to `finish`'s braces, above the early returns deliberately: the two returns below
+      // resolve this promise without reaching `finish`, so a caption from the previous answer
+      // would outlive a listen that never starts.
+      //
+      // **It has no behavioural half, and that is recorded rather than implied.** `finish` clears
+      // the caption on every path that resolves normally, so with `finish` correct this line can
+      // never be the difference - deleting it leaves all four tests in
+      // `TestInterviewLiveCaptions.test.tsx` green, which was measured and not assumed. It is
+      // kept for the one path neither covers: `stopListeningInternal` reaches `finish` only via
+      // `recognition.stop()`, and that call is inside a `try/catch`, so a recogniser that throws
+      // on stop would leave the caption standing. Do not read it as a guard the suite is holding.
+      setInterimText('')
+
       const SpeechRecognition =
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -485,6 +508,7 @@ export default function TestInterviewDialog({
         setIsListening(false)
         setIsPaused(false)
         isPausedRef.current = false
+        setInterimText('')
         resolve(finalText.trim())
       }
 
@@ -507,7 +531,13 @@ export default function TestInterviewDialog({
           if (event.results[i].isFinal) parts.push(event.results[i][0].transcript)
           else currentInterim += event.results[i][0].transcript
         }
-        maybeStartSpeculative((parts.join(' ') + ' ' + currentInterim).trim())
+        // One string, two readers, and they do different things with it. The caption shows it
+        // immediately and unconditionally; the speculative press waits for ten words and an
+        // 800ms lull before spending a request on it. Computing it once is what keeps the two
+        // from drifting into disagreeing about what was heard.
+        const heardSoFar = (parts.join(' ') + ' ' + currentInterim).trim()
+        setInterimText(heardSoFar)
+        maybeStartSpeculative(heardSoFar)
       }
 
       recognition.onend = () => {
@@ -946,6 +976,24 @@ export default function TestInterviewDialog({
                   {speakingIndicator}
                   {!isBusy && statusMsg && (
                     <p className="text-xs text-amber-400 text-center max-w-xs">{statusMsg}</p>
+                  )}
+                  {/*
+                    * The live caption. Same position in the stack as the participant page's -
+                    * after the status line, before the listening controls - and the same italic
+                    * quoted shape, in this dialog's own palette rather than the page's, for the
+                    * reason `FALLBACK_FACE` gives above: a light grey on this dark surface reads
+                    * as a rendering fault.
+                    *
+                    * `break-words` because a caption is unbroken machine output and the card it
+                    * sits in must not be widened by it.
+                    */}
+                  {interimText && (
+                    <p
+                      data-testid="live-caption"
+                      className="text-sm text-slate-400 italic text-center leading-relaxed px-4 max-w-md break-words"
+                    >
+                      &ldquo;{interimText}&rdquo;
+                    </p>
                   )}
                   {isListening && (
                     <div className="flex flex-col items-center gap-3 w-full max-w-xs">
